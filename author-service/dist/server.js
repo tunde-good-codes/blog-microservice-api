@@ -57,6 +57,6 @@ async function initDB() {
 app.use("/api/v1", blogRoutes);
 initDB().then(() => {
     app.listen(port, () => {
-        console.log(`Server is running on http://localhost:${port}`);
+        console.log(`author Server is running on http://localhost:${port}`);
     });
 });

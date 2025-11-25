@@ -1,275 +1,157 @@
-import getBuffer from "../utils/dataUri.js";
-import { sql } from "../utils/db.js";
-import { invalidateChacheJob } from "../utils/rabbitMq.js";
-import TryCatch from "../utils/TryCatch.js";
-import cloudinary from "cloudinary";
-import { GoogleGenAI } from "@google/genai";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AuthenticatedRequest } from "../middleware/isAuth.js";
+import { redisClient } from "../server.js";
+import { sql } from "../utils/db.js";
+import TryCatch from "../utils/TryCatch.js";
+import axios from "axios";
 
-export const createBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
-  const { title, description, blogContent, category } = req.body;
+export const getAllBlogs = TryCatch(async (req, res) => {
+  const { searchQuery = "", category = "" } = req.query;
 
-  const file = req.file;
+  const cacheKey = `blogs:${searchQuery}:${category}`;
 
-  if (!file) {
-    res.status(400).json({
-      message: "No file to upload",
+  const cached = await redisClient.get(cacheKey);
+
+  if (cached) {
+    console.log("Serving from Redis cache");
+    res.json(JSON.parse(cached));
+    return;
+  }
+  let blogs;
+
+  if (searchQuery && category) {
+    blogs = await sql`SELECT * FROM blogs WHERE (title ILIKE ${
+      "%" + searchQuery + "%"
+    } OR description ILIKE ${
+      "%" + searchQuery + "%"
+    }) AND category = ${category} ORDER BY create_at DESC`;
+  } else if (searchQuery) {
+    blogs = await sql`SELECT * FROM blogs WHERE (title ILIKE ${
+      "%" + searchQuery + "%"
+    } OR description ILIKE ${"%" + searchQuery + "%"}) ORDER BY create_at DESC`;
+  } else if (category) {
+    blogs =
+      await sql`SELECT * FROM blogs WHERE category=${category} ORDER BY create_at DESC`;
+  } else {
+    blogs = await sql`SELECT * FROM blogs ORDER BY create_at DESC`;
+  }
+
+  console.log("Serving from db");
+
+  await redisClient.set(cacheKey, JSON.stringify(blogs), { EX: 3600 });
+
+  res.json(blogs);
+});
+
+export const getSingleBlog = TryCatch(async (req, res) => {
+  const blogid = req.params.id;
+
+  const cacheKey = `blog:${blogid}`;
+
+  const cached = await redisClient.get(cacheKey);
+
+  if (cached) {
+    console.log("Serving single blog from Redis cache");
+    res.json(JSON.parse(cached));
+    return;
+  }
+
+  const blog = await sql`SELECT * FROM blogs WHERE id = ${blogid}`;
+
+  if (blog.length === 0) {
+    res.status(404).json({
+      message: "no blog with this id",
     });
     return;
   }
 
-  const fileBuffer = getBuffer(file);
+  const { data } = await axios.get(
+    `${process.env.USER_SERVICE}/api/v1/user/${blog[0].author}`
+  );
 
-  if (!fileBuffer || !fileBuffer.content) {
-    res.status(400).json({
-      message: "Failed to generate buffer",
-    });
-    return;
-  }
+  const responseData = { blog: blog[0], author: data };
 
-  const cloud = await cloudinary.v2.uploader.upload(fileBuffer.content, {
-    folder: "blogs",
-  });
+  await redisClient.set(cacheKey, JSON.stringify(responseData), { EX: 3600 });
 
-  const result =
-    await sql`INSERT INTO blogs (title, description, image, blogContent,category, author) VALUES (${title}, ${description},${cloud.secure_url},${blogContent},${category},${req.user?._id}) RETURNING *`;
+  res.json(responseData);
+});
 
-  //await invalidateChacheJob(["blogs:*"]);
+export const addComment = TryCatch(async (req: AuthenticatedRequest, res) => {
+  const { id: blogid } = req.params;
+  const { comment } = req.body;
+
+  await sql`INSERT INTO comments (comment, blogid, userid, username) VALUES (${comment}, ${blogid}, ${req.user?._id}, ${req.user?.name}) RETURNING *`;
 
   res.json({
-    message: "Blog Created",
-    blog: result[0],
+    message: "Comment Added",
   });
 });
 
-export const updateBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
+export const getAllComments = TryCatch(async (req, res) => {
   const { id } = req.params;
-  const { title, description, blogContent, category } = req.body;
 
-  const file = req.file;
+  const comments =
+    await sql`SELECT * FROM comments WHERE blogid = ${id} ORDER BY create_at DESC`;
 
-  const blog = await sql`SELECT * FROM blogs WHERE id = ${id}`;
+  res.json(comments);
+});
 
-  if (!blog.length) {
-    res.status(404).json({
-      message: "No blog with this id",
-    });
-    return;
-  }
+export const deleteComment = TryCatch(
+  async (req: AuthenticatedRequest, res) => {
+    const { commentid } = req.params;
 
-  if (blog[0].author !== req.user?._id) {
-    res.status(401).json({
-      message: "You are not author of this blog",
-    });
-    return;
-  }
+    const comment = await sql`SELECT * FROM comments WHERE id = ${commentid}`;
 
-  let imageUrl = blog[0].image;
+    console.log(comment);
 
-  if (file) {
-    const fileBuffer = getBuffer(file);
-
-    if (!fileBuffer || !fileBuffer.content) {
-      res.status(400).json({
-        message: "Failed to generate buffer",
+    if (comment[0].userid !== req.user?._id) {
+      res.status(401).json({
+        message: "You are not owner of this comment",
       });
       return;
     }
 
-    const cloud = await cloudinary.v2.uploader.upload(fileBuffer.content, {
-      folder: "blogs",
+    await sql`DELETE FROM comments WHERE id = ${commentid}`;
+
+    res.json({
+      message: "Comment Deleted",
     });
-
-    imageUrl = cloud.secure_url;
   }
+);
 
-  //Previous code
+export const saveBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
+  const { blogid } = req.params;
+  const userid = req.user?._id;
 
-  /* const updatedBlog = await sql`UPDATE blogs SET
-    title = ${title || blog[0].title},
-    description = ${title || blog[0].description},
-    image= ${imageUrl},
-    blogContent = ${title || blog[0].blogContent},
-    category = ${title || blog[0].category}
-
-    WHERE id = ${id}
-    RETURNING *
-    `; */
-
-  //updated code
-
-  const updatedBlog = await sql`UPDATE blogs SET
-    title = ${title || blog[0].title},
-    description = ${description || blog[0].description},
-    image= ${imageUrl},
-    blogContent = ${blogContent || blog[0].blogContent},
-    category = ${category || blog[0].category}
-
-    WHERE id = ${id}
-    RETURNING *
-    `;
-
-//  await invalidateChacheJob(["blogs:*", `blog:${id}`]);
-
-  res.json({
-    message: "Blog Updated",
-    blog: updatedBlog[0],
-  });
-});
-
-export const deleteBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
-  const blog = await sql`SELECT * FROM blogs WHERE id = ${req.params.id}`;
-
-  if (!blog.length) {
-    res.status(404).json({
-      message: "No blog with this id",
-    });
-    return;
-  }
-
-  if (blog[0].author !== req.user?._id) {
-    res.status(401).json({
-      message: "You are not author of this blog",
-    });
-    return;
-  }
-
-  await sql`DELETE FROM savedBlogs WHERE blogId = ${req.params.id}`;
-  await sql`DELETE FROM comments WHERE blogId = ${req.params.id}`;
-  await sql`DELETE FROM blogs WHERE id = ${req.params.id}`;
-
-  //await invalidateChacheJob(["blogs:*", `blog:${req.params.id}`]);
-
-  res.json({
-    message: "Blog Delete",
-  });
-});
-
-export const aiTitleResponse = TryCatch(async (req, res) => {
-  const { text } = req.body;
-
-  const prompt = `Correct the grammar of the following blog title and return only the corrected title without any additional text, formatting, or symbols: "${text}"`;
-
-  let result;
-
-  const ai = new GoogleGenAI({
-    apiKey: process.env.Gemini_Api_Key,
-  });
-
-  async function main() {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: prompt,
-    });
-
-    let rawtext = response.text;
-
-    if (!rawtext) {
-      res.status(400).json({
-        message: "Something went wrong",
-      });
-      return;
-    }
-
-    result = rawtext
-      .replace(/\*\*/g, "")
-      .replace(/[\r\n]+/g, "")
-      .replace(/[*_`~]/g, "")
-      .trim();
-  }
-
-  await main();
-
-  res.json(result);
-});
-
-export const aiDescriptionResponse = TryCatch(async (req, res) => {
-  const { title, description } = req.body;
-
-  const prompt =
-    description === ""
-      ? `Generate only one short blog description based on this 
-title: "${title}". Your response must be only one sentence, strictly under 30 words, with no options, no greetings, and 
-no extra text. Do not explain. Do not say 'here is'. Just return the description only.`
-      : `Fix the grammar in the 
-following blog description and return only the corrected sentence. Do not add anything else: "${description}"`;
-
-  let result;
-
-  const ai = new GoogleGenAI({
-    apiKey: process.env.Gemini_Api_Key,
-  });
-
-  async function main() {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: prompt,
-    });
-
-    let rawtext = response.text;
-
-    if (!rawtext) {
-      res.status(400).json({
-        message: "Something went wrong",
-      });
-      return;
-    }
-
-    result = rawtext
-      .replace(/\*\*/g, "")
-      .replace(/[\r\n]+/g, "")
-      .replace(/[*_`~]/g, "")
-      .trim();
-  }
-
-  await main();
-
-  res.json(result);
-});
-
-export const aiBlogResponse = TryCatch(async (req, res) => {
-  const prompt = ` You will act as a grammar correction engine. I will provide you with blog content 
-in rich HTML format (from Jodit Editor). Do not generate or rewrite the content with new ideas. Only correct 
-grammatical, punctuation, and spelling errors while preserving all HTML tags and formatting. Maintain inline styles, 
-image tags, line breaks, and structural tags exactly as they are. Return the full corrected HTML string as output. `;
-
-  const { blog } = req.body;
-  if (!blog) {
+  if (!blogid || !userid) {
     res.status(400).json({
-      message: "Please provide blog",
+      message: "Missing blog id or userid",
     });
     return;
   }
 
-  const fullMessage = `${prompt}\n\n${blog}`;
+  const existing =
+    await sql`SELECT * FROM savedblogs WHERE userid = ${userid} AND blogid = ${blogid}`;
 
-  const ai = new GoogleGenerativeAI(process.env.Gemini_Api_Key as string);
+  if (existing.length === 0) {
+    await sql`INSERT INTO savedblogs (blogid, userid) VALUES (${blogid}, ${userid})`;
 
-  const model = ai.getGenerativeModel({ model: "gemini-1.5-pro" });
+    res.json({
+      message: "Blog Saved",
+    });
+    return;
+  } else {
+    await sql`DELETE FROM savedblogs WHERE userid = ${userid} AND blogid = ${blogid}`;
 
-  const result = await model.generateContent({
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            text: fullMessage,
-          },
-        ],
-      },
-    ],
-  });
+    res.json({
+      message: "Blog Unsaved",
+    });
+    return;
+  }
+});
 
-  const responseText = await result.response.text();
+export const getSavedBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
+  const blogs =
+    await sql`SELECT * FROM savedblogs WHERE userid = ${req.user?._id}`;
 
-  const cleanedHtml = responseText
-    .replace(/^(html|```html|```)\n?/i, "")
-    .replace(/```$/i, "")
-    .replace(/\*\*/g, "")
-    .replace(/[\r\n]+/g, "")
-    .replace(/[*_`~]/g, "")
-    .trim();
-
-  res.status(200).json({ html: cleanedHtml });
+  res.json(blogs);
 });

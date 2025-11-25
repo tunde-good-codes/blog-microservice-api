@@ -25,5 +25,5 @@ app.use("/api/v1", userRoutes);
 const port = process.env.PORT;
 
 app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
+  console.log(`User Server is running on http://localhost:${port}`);
 });
