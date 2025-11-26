@@ -16,13 +16,21 @@ const port = process.env.PORT;
 
 //startCacheConsumer();
 
+// Updated Redis client for Redis Cloud
 export const redisClient = createClient({
-  url: process.env.REDIS_URL,
+  username: process.env.REDIS_USERNAME, // 'default'
+  password: process.env.REDIS_PASSWORD, // your password
+  socket: {
+    host: process.env.REDIS_HOST, // redis-13584.c278.us-east-1-4.ec2.cloud.redislabs.com
+    port: parseInt(process.env.REDIS_PORT || "13584")
+  }
 });
+
+redisClient.on('error', err => console.log('Redis Client Error', err));
 
 redisClient
   .connect()
-  .then(() => console.log("Connected to redis"))
+  .then(() => console.log("Connected to Redis Cloud"))
   .catch(console.error);
 
 app.use("/api/v1", blogRoutes);
