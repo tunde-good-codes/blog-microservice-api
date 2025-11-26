@@ -30,15 +30,15 @@ export const getAllBlogs = TryCatch(async (req, res) => {
     res.json(blogs);
 });
 export const getSingleBlog = TryCatch(async (req, res) => {
-    const blogid = req.params.id;
-    const cacheKey = `blog:${blogid}`;
+    const blogId = req.params.id;
+    const cacheKey = `blog:${blogId}`;
     const cached = await redisClient.get(cacheKey);
     if (cached) {
         console.log("Serving single blog from Redis cache");
         res.json(JSON.parse(cached));
         return;
     }
-    const blog = await sql `SELECT * FROM blogs WHERE id = ${blogid}`;
+    const blog = await sql `SELECT * FROM blogs WHERE id = ${blogId}`;
     if (blog.length === 0) {
         res.status(404).json({
             message: "no blog with this id",

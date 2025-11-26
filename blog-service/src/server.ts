@@ -2,7 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import blogRoutes from "./routes/blog.js";
 import { createClient } from "redis";
-//import { startCacheConsumer } from "./utils/consumer.js";
+import { startCacheConsumer } from "./utils/consumer.js";
 import cors from "cors";
 
 dotenv.config();
@@ -14,7 +14,7 @@ app.use(cors());
 
 const port = process.env.PORT;
 
-//startCacheConsumer();
+startCacheConsumer();
 
 // Updated Redis client for Redis Cloud
 export const redisClient = createClient({

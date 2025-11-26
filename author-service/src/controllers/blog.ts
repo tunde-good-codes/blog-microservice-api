@@ -1,6 +1,6 @@
+import { invalidateCacheJob } from "./../utils/rabbitMq.js";
 import getBuffer from "../utils/dataUri.js";
 import { sql } from "../utils/db.js";
-import { invalidateChacheJob } from "../utils/rabbitMq.js";
 import TryCatch from "../utils/TryCatch.js";
 import cloudinary from "cloudinary";
 import { GoogleGenAI } from "@google/genai";
@@ -35,8 +35,7 @@ export const createBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
   const result =
     await sql`INSERT INTO blogs (title, description, image, blogContent,category, author) VALUES (${title}, ${description},${cloud.secure_url},${blogContent},${category},${req.user?._id}) RETURNING *`;
 
-  //await invalidateChacheJob(["blogs:*"]);
-
+  await invalidateCacheJob(["blogs:*"]);
   res.json({
     message: "Blog Created",
     blog: result[0],
@@ -110,7 +109,7 @@ export const updateBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
     RETURNING *
     `;
 
-//  await invalidateChacheJob(["blogs:*", `blog:${id}`]);
+  //  await invalidateChacheJob(["blogs:*", `blog:${id}`]);
 
   res.json({
     message: "Blog Updated",
@@ -139,8 +138,7 @@ export const deleteBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
   await sql`DELETE FROM comments WHERE blogId = ${req.params.id}`;
   await sql`DELETE FROM blogs WHERE id = ${req.params.id}`;
 
-  //await invalidateChacheJob(["blogs:*", `blog:${req.params.id}`]);
-
+  await invalidateCacheJob(["blogs:*", `blog:${req.params.id}`]);
   res.json({
     message: "Blog Delete",
   });
