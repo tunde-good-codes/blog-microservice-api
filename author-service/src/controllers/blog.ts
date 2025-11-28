@@ -109,7 +109,7 @@ export const updateBlog = TryCatch(async (req: AuthenticatedRequest, res) => {
     RETURNING *
     `;
 
-  //  await invalidateChacheJob(["blogs:*", `blog:${id}`]);
+  await invalidateCacheJob(["blogs:*", `blog:${id}`])
 
   res.json({
     message: "Blog Updated",

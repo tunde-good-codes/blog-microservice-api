@@ -33,7 +33,7 @@ export const publishToQueue = async (queueName: string, message: any) => {
   });
 };
 
-export const invalidateChacheJob = async (cacheKeys: string[]) => {
+export const invalidateCacheJob = async (cacheKeys: string[]) => {
   try {
     const message = {
       action: "invalidateCache",
